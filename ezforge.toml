@@ -1,0 +1,19 @@
+# ezforge.toml — ezForge platform configuration for this MCP server
+# Fields below are the ones `ezforge servers create` and `ezforge deploy` read (cli/internal/config/ezforge.go).
+# The server listens on port 8080 (EXPOSE in the Dockerfile) and answers GET /healthz;
+# the platform's health check path is fixed, not set here.
+
+[project]
+# Name of the ezForge project to deploy into (create it with `ezforge project create <name>`)
+name = "my-first-project"
+
+[server]
+# Server name: pass the same name to `ezforge servers create <name>`; `ezforge deploy` deploys to it
+name = "my-mcp-server"
+
+[build]
+# Container file `ezforge deploy` builds
+container_file = "Dockerfile"
+# `ezforge deploy` pushes the image to ghcr.io/ezforgeai unless you set a registry
+# you can push to. Uncomment and edit:
+# registry = "ghcr.io/your-org"
