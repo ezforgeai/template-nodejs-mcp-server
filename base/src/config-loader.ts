@@ -92,6 +92,8 @@ export interface FeatureFlags {
   quoteRequests: boolean;
   faq: boolean;
   menuBrowsing: boolean;
+  /** Derived (v3.0, Ready Phase 4.2): true iff the config carries at least one event; omitted otherwise. */
+  events?: boolean;
 }
 
 /** A single catalog category. */
@@ -109,6 +111,48 @@ export interface FacetV3 {
   name: string;
   description?: string;
   sortOrder: number;
+}
+
+/**
+ * Ticket price tier of an event (v3.0, Ready Phase 4.2), ordered by `sortOrder`. The tier is current
+ * while now (business timezone) is before the local datetime (occurrence date − `endsDaysBefore`
+ * days) at `endsAtLocalTime`; both omitted means no cutoff. Mirrors `EventPriceTierV3` in
+ * packages/template-engine/src/config-schema.ts.
+ */
+export interface EventPriceTierV3 {
+  label: string;
+  priceCents: number;
+  currency: string;
+  sortOrder: number;
+  endsDaysBefore?: number;
+  /** "HH:MM" local time. */
+  endsAtLocalTime?: string;
+}
+
+/**
+ * An event (v3.0, Ready Phase 4.2). Recurrence is a rule, never expanded in the config: a `weekly`
+ * event repeats on the weekday of `startDate` until `recurrenceUntil` (inclusive), skipping
+ * `excludedDates`. `endTime` before `startTime` means it ends after midnight. Mirrors `EventV3` in
+ * packages/template-engine/src/config-schema.ts.
+ */
+export interface EventV3 {
+  id: string;
+  title: string;
+  description?: string;
+  performer?: string;
+  facetId?: string;
+  /** "YYYY-MM-DD", business-local date of the first occurrence. */
+  startDate: string;
+  doorsTime?: string;
+  startTime: string;
+  endTime?: string;
+  recurrence: 'none' | 'weekly';
+  recurrenceUntil?: string;
+  excludedDates?: string[];
+  status: 'scheduled' | 'sold_out' | 'cancelled';
+  ticketUrl?: string;
+  rsvpUrl?: string;
+  priceTiers: EventPriceTierV3[];
 }
 
 /** A single catalog item — menu item, service, or product. */
@@ -172,6 +216,8 @@ export interface ReadyConfig {
   catalog?: CatalogBlock;
   /** Active offering groups in `sortOrder` (v3.0); absent when the business has none. */
   facets?: FacetV3[];
+  /** Events (v3.0, Ready Phase 4.2); absent when the business has none. Expanded by `tools/events.ts`. */
+  events?: EventV3[];
   /**
    * Schedule-gated menus (v3.0, spec §5.5/§7). Absent on v2.0 blobs and menu-less v3.0 blobs.
    * Section items carry `itemId` plus override-only fields; resolve them against
@@ -484,6 +530,72 @@ function isFacetV3(v: unknown): v is FacetV3 {
   );
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function isOptionalString(v: unknown): boolean {
+  return v === undefined || typeof v === 'string';
+}
+
+/** A `YYYY-MM-DD` string that is a real calendar date (rejects `2026-02-30`). */
+function isRealDate(v: unknown): v is string {
+  if (typeof v !== 'string' || !DATE_RE.test(v)) return false;
+  const ms = Date.parse(v);
+  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 10) === v;
+}
+
+/** Defense in depth: event links must be http(s), matching the dashboard's input check. */
+function isOptionalHttpUrl(v: unknown): boolean {
+  return v === undefined || (typeof v === 'string' && /^https?:\/\//i.test(v));
+}
+
+function isEventPriceTierV3(v: unknown): v is EventPriceTierV3 {
+  if (!isRecord(v)) return false;
+  const days = v['endsDaysBefore'];
+  const at = v['endsAtLocalTime'];
+  // Both cutoff fields are set or both are omitted.
+  if ((days === undefined) !== (at === undefined)) return false;
+  if (days !== undefined && !(Number.isInteger(days) && (days as number) >= 0)) return false;
+  if (at !== undefined && !(typeof at === 'string' && HHMM_RE.test(at))) return false;
+  return (
+    typeof v['label'] === 'string' &&
+    Number.isInteger(v['priceCents']) &&
+    (v['priceCents'] as number) >= 0 &&
+    typeof v['currency'] === 'string' &&
+    typeof v['sortOrder'] === 'number'
+  );
+}
+
+function isEventV3(v: unknown): v is EventV3 {
+  if (!isRecord(v)) return false;
+  if (typeof v['id'] !== 'string' || v['id'].length === 0) return false;
+  if (typeof v['title'] !== 'string') return false;
+  if (!isOptionalString(v['description']) || !isOptionalString(v['performer'])) return false;
+  if (!isOptionalString(v['facetId']) || !isOptionalHttpUrl(v['ticketUrl']) || !isOptionalHttpUrl(v['rsvpUrl'])) {
+    return false;
+  }
+  if (!isRealDate(v['startDate'])) return false;
+  if (typeof v['startTime'] !== 'string' || !HHMM_RE.test(v['startTime'])) return false;
+  for (const key of ['doorsTime', 'endTime']) {
+    const time = v[key];
+    if (time !== undefined && !(typeof time === 'string' && HHMM_RE.test(time))) return false;
+  }
+  if (v['recurrence'] !== 'none' && v['recurrence'] !== 'weekly') return false;
+  const until = v['recurrenceUntil'];
+  if (until !== undefined && !isRealDate(until)) return false;
+  // A weekly event needs an end to its recurrence.
+  if (v['recurrence'] === 'weekly' && until === undefined) return false;
+  const excluded = v['excludedDates'];
+  if (
+    excluded !== undefined &&
+    !(Array.isArray(excluded) && excluded.every(isRealDate))
+  ) {
+    return false;
+  }
+  if (v['status'] !== 'scheduled' && v['status'] !== 'sold_out' && v['status'] !== 'cancelled') return false;
+  return Array.isArray(v['priceTiers']) && v['priceTiers'].every(isEventPriceTierV3);
+}
+
 function isMenuSchedule(v: unknown): boolean {
   if (!isRecord(v)) return false;
   if (typeof v['start'] !== 'string' || typeof v['end'] !== 'string') return false;
@@ -686,6 +798,16 @@ export function loadConfig(filePath: string = READY_CONFIG_FILE_PATH): ReadyConf
     facets = obj['facets'] as FacetV3[];
   }
 
+  let events: EventV3[] | undefined;
+  if (obj['events'] !== undefined) {
+    if (!Array.isArray(obj['events']) || !obj['events'].every(isEventV3)) {
+      throw new ConfigError(
+        'EZFORGE_READY_CONFIG.events must be an array of events (id, title, startDate, startTime, recurrence, status, priceTiers; weekly needs recurrenceUntil)',
+      );
+    }
+    events = obj['events'] as EventV3[];
+  }
+
   let menus: MenuSourceV3[] | undefined;
   if (obj['menus'] !== undefined) {
     if (!Array.isArray(obj['menus']) || !obj['menus'].every(isMenuV3)) {
@@ -726,6 +848,7 @@ export function loadConfig(filePath: string = READY_CONFIG_FILE_PATH): ReadyConf
     featureFlags: obj['featureFlags'] as FeatureFlags,
     catalog: obj['catalog'] as CatalogBlock | undefined,
     ...(facets ? { facets } : {}),
+    ...(events ? { events } : {}),
     ...(menus ? { menus } : {}),
     integrations: obj['integrations'] as IntegrationsBlock | undefined,
     analytics: obj['analytics'] as AnalyticsBlock | undefined,

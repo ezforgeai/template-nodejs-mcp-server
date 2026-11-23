@@ -8,6 +8,8 @@
  *   - get_last_order     — today's last-order times per role and window state
  *   - get_contact_info   — phone, email, website, address
  *   - list_facets        — offering groups with their categories (only when the config has facets)
+ *   - list_events        — event occurrences with the current price tier (only when featureFlags.events)
+ *   - get_event          — one event with all price tiers (only when featureFlags.events)
  *
  * All time logic lives in `../temporal.ts`; handlers only shape its results.
  */
@@ -20,9 +22,12 @@ import type { AnalyticsReporter } from '../analytics.js';
 import { OWNER_TEXT_TOOL_NOTE, labelOwnerText } from '../owner-text.js';
 import { HOURS_TOOLS, handleHoursTool, isHoursToolName } from './hours.js';
 import { facetToolsFor, handleFacetTool, isFacetToolName } from './facets.js';
+import { eventToolsFor, handleEventsTool, isEventsToolName } from './events.js';
 
 const TOOL_REQUIRED_SCOPE: Record<string, string> = {
   list_facets: 'mcp:read',
+  list_events: 'mcp:read',
+  get_event: 'mcp:read',
   get_business_info: 'mcp:read',
   get_hours: 'mcp:read',
   check_open_now: 'mcp:read',
@@ -144,6 +149,7 @@ export function registerTools(
       },
       ...HOURS_TOOLS,
       ...facetToolsFor(config),
+      ...eventToolsFor(config),
       {
         name: 'get_contact_info',
         description: 'Returns contact information for the business (phone, email, website, address).',
@@ -176,6 +182,8 @@ export function registerTools(
       result = handleHoursTool(name, args, hours, clock) as ToolResult;
     } else if (isFacetToolName(name) && facetToolsFor(config).some((tool) => tool.name === name)) {
       result = handleFacetTool(name, args, config) as ToolResult;
+    } else if (isEventsToolName(name) && eventToolsFor(config).some((tool) => tool.name === name)) {
+      result = handleEventsTool(name, args, config.events ?? [], hours.timezone, clock) as ToolResult;
     } else if (name === 'get_contact_info') {
       result = {
         content: [{ type: 'text', text: JSON.stringify(config.contact) }],
