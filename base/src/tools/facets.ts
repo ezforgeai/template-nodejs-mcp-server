@@ -1,5 +1,9 @@
 /**
- * Shared offering-group (facet) tools for ezForge Ready templates.
+ * Shared offering-group (facet) and area tools for ezForge Ready templates.
+ *
+ * `list_areas` answers "is the show upstairs or downstairs, does the downstairs
+ * bar serve food?": the venue's areas in `sortOrder` with `hasBar`/`hasKitchen`.
+ * It is listed only when the config has areas.
  *
  * `list_facets` answers "what does this place offer?" (kitchen, taproom, live
  * music): the business facets in `sortOrder`, each with its categories, plus an
@@ -17,37 +21,57 @@ import { OWNER_TEXT_LABEL, OWNER_TEXT_TOOL_NOTE } from '../owner-text.js';
 
 export type FacetToolResult = { content: Array<{ type: string; text: string }>; isError?: boolean };
 
-export const FACET_TOOL_NAMES = ['list_facets'] as const;
+export const FACET_TOOL_NAMES = ['list_facets', 'list_areas'] as const;
 export type FacetToolName = (typeof FACET_TOOL_NAMES)[number];
 
 export function isFacetToolName(name: string): name is FacetToolName {
   return (FACET_TOOL_NAMES as readonly string[]).includes(name);
 }
 
-export const FACET_TOOLS = [
-  {
-    name: 'list_facets',
-    description:
-      'Lists what the business offers, grouped into offering groups (e.g. "Kitchen", "Taproom", "Live music"). ' +
-      'Returns { facets: [{ id, name, description?, categories: [{ id, name }] }], ungrouped: [{ id, name }] } ' +
-      'with facets and categories in display order; `ungrouped` holds categories that belong to no offering group. ' +
-      OWNER_TEXT_TOOL_NOTE,
-    inputSchema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
+const LIST_FACETS_TOOL = {
+  name: 'list_facets',
+  description:
+    'Lists what the business offers, grouped into offering groups (e.g. "Kitchen", "Taproom", "Live music"). ' +
+    'Returns { facets: [{ id, name, description?, categories: [{ id, name }] }], ungrouped: [{ id, name }] } ' +
+    'with facets and categories in display order; `ungrouped` holds categories that belong to no offering group. ' +
+    OWNER_TEXT_TOOL_NOTE,
+  inputSchema: {
+    type: 'object' as const,
+    properties: {},
+    required: [],
   },
-];
+};
 
-type FacetToolDefinition = (typeof FACET_TOOLS)[number];
+const LIST_AREAS_TOOL = {
+  name: 'list_areas',
+  description:
+    'Lists the areas of the venue (e.g. "Upstairs", "Downstairs", "Patio") in display order. ' +
+    'Returns { areas: [{ id, name, description?, capacity?, hasBar, hasKitchen }] }. ' +
+    '`hasBar` and `hasKitchen` say whether that area has a bar or serves food. ' +
+    'Events and hours carry an `areaId` when they belong to one area. ' +
+    OWNER_TEXT_TOOL_NOTE,
+  inputSchema: {
+    type: 'object' as const,
+    properties: {},
+    required: [],
+  },
+};
+
+export const FACET_TOOLS = [LIST_FACETS_TOOL];
+export const AREA_TOOLS = [LIST_AREAS_TOOL];
+
+type FacetToolDefinition = typeof LIST_FACETS_TOOL | typeof LIST_AREAS_TOOL;
 
 /**
  * Tool definitions to list for this config. `list_facets` is offered only when
- * the config carries at least one facet; an empty or absent `facets` adds none.
+ * the config carries at least one facet, and `list_areas` only when it carries
+ * at least one area; an empty or absent list adds none.
  */
-export function facetToolsFor(config: Pick<ReadyConfig, 'facets'>): FacetToolDefinition[] {
-  return (config.facets?.length ?? 0) > 0 ? [...FACET_TOOLS] : [];
+export function facetToolsFor(config: Pick<ReadyConfig, 'facets' | 'areas'>): FacetToolDefinition[] {
+  return [
+    ...((config.facets?.length ?? 0) > 0 ? FACET_TOOLS : []),
+    ...((config.areas?.length ?? 0) > 0 ? AREA_TOOLS : []),
+  ];
 }
 
 function jsonResult(value: unknown): FacetToolResult {
@@ -72,9 +96,20 @@ function categoryRef(category: CatalogCategory): { id: string; name: string } {
 export function handleFacetTool(
   name: FacetToolName,
   _args: Record<string, unknown> | undefined,
-  config: Pick<ReadyConfig, 'facets' | 'catalog'>,
+  config: Pick<ReadyConfig, 'facets' | 'catalog' | 'areas'>,
 ): FacetToolResult {
   switch (name) {
+    case 'list_areas':
+      return jsonResult({
+        areas: [...(config.areas ?? [])].sort(bySortOrder).map((area) => ({
+          id: area.id,
+          name: area.name,
+          ...(area.description ? { description: `${OWNER_TEXT_LABEL}${area.description}` } : {}),
+          ...(area.capacity === undefined ? {} : { capacity: area.capacity }),
+          hasBar: area.hasBar,
+          hasKitchen: area.hasKitchen,
+        })),
+      });
     case 'list_facets': {
       const facets: FacetV3[] = [...(config.facets ?? [])].sort(bySortOrder);
       const categories = [...(config.catalog?.categories ?? [])].sort(bySortOrder);

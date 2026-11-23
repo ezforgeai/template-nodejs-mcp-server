@@ -26,6 +26,7 @@ import { eventToolsFor, handleEventsTool, isEventsToolName } from './events.js';
 
 const TOOL_REQUIRED_SCOPE: Record<string, string> = {
   list_facets: 'mcp:read',
+  list_areas: 'mcp:read',
   list_events: 'mcp:read',
   get_event: 'mcp:read',
   get_business_info: 'mcp:read',
@@ -139,7 +140,7 @@ export function registerTools(
         // RT-1.F task (see issue #8562 finding 2), not part of RT-1.F.3.
         description:
           'Returns the business hours of operation as a structured block plus a human-readable summary: ' +
-          '{ timezone, regular: { <weekday>: [{ open, close, role, lastOrder? }] }, special: [...], closures: [...], summary }. ' +
+          '{ timezone, regular: { <weekday>: [{ open, close, role, lastOrder?, areaId? }] }, special: [...], closures: [...], summary }. ' +
           'An empty `regular[<weekday>]` array means closed that day. `timezone` is empty only for legacy configs that do not carry one.',
         inputSchema: {
           type: 'object',
@@ -183,7 +184,7 @@ export function registerTools(
     } else if (isFacetToolName(name) && facetToolsFor(config).some((tool) => tool.name === name)) {
       result = handleFacetTool(name, args, config) as ToolResult;
     } else if (isEventsToolName(name) && eventToolsFor(config).some((tool) => tool.name === name)) {
-      result = handleEventsTool(name, args, config.events ?? [], hours.timezone, clock) as ToolResult;
+      result = handleEventsTool(name, args, config.events ?? [], hours.timezone, clock, config.areas ?? []) as ToolResult;
     } else if (name === 'get_contact_info') {
       result = {
         content: [{ type: 'text', text: JSON.stringify(config.contact) }],

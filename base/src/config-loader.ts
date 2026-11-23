@@ -114,6 +114,20 @@ export interface FacetV3 {
 }
 
 /**
+ * A sub-venue area within one business, e.g. Upstairs / Downstairs (v3.0, Ready Phase 4.x). Mirrors
+ * `AreaV3` in packages/template-engine/src/config-schema.ts.
+ */
+export interface AreaV3 {
+  id: string;
+  name: string;
+  description?: string;
+  capacity?: number;
+  hasBar: boolean;
+  hasKitchen: boolean;
+  sortOrder: number;
+}
+
+/**
  * Ticket price tier of an event (v3.0, Ready Phase 4.2), ordered by `sortOrder`. The tier is current
  * while now (business timezone) is before the local datetime (occurrence date − `endsDaysBefore`
  * days) at `endsAtLocalTime`; both omitted means no cutoff. Mirrors `EventPriceTierV3` in
@@ -141,6 +155,8 @@ export interface EventV3 {
   description?: string;
   performer?: string;
   facetId?: string;
+  /** References `areas[].id`; absent when the event is not tied to an area. */
+  areaId?: string;
   /** "YYYY-MM-DD", business-local date of the first occurrence. */
   startDate: string;
   doorsTime?: string;
@@ -216,6 +232,8 @@ export interface ReadyConfig {
   catalog?: CatalogBlock;
   /** Active offering groups in `sortOrder` (v3.0); absent when the business has none. */
   facets?: FacetV3[];
+  /** Active areas in `sortOrder` (v3.0); absent when the business has none. */
+  areas?: AreaV3[];
   /** Events (v3.0, Ready Phase 4.2); absent when the business has none. Expanded by `tools/events.ts`. */
   events?: EventV3[];
   /**
@@ -286,6 +304,8 @@ export interface HoursInterval {
   close: string;
   role: HoursRole;
   lastOrder?: string;
+  /** References `areas[].id`; absent when the interval is venue-wide. A label only. */
+  areaId?: string;
 }
 
 /** A one-off or recurring-annual special-hours entry (holidays, etc.). */
@@ -331,6 +351,7 @@ function isHoursInterval(v: unknown): v is HoursInterval {
   if (typeof obj['close'] !== 'string') return false;
   if (!isHoursRole(obj['role'])) return false;
   if ('lastOrder' in obj && typeof obj['lastOrder'] !== 'string') return false;
+  if ('areaId' in obj && typeof obj['areaId'] !== 'string') return false;
   return true;
 }
 
@@ -530,6 +551,20 @@ function isFacetV3(v: unknown): v is FacetV3 {
   );
 }
 
+function isAreaV3(v: unknown): v is AreaV3 {
+  return (
+    isRecord(v) &&
+    typeof v['id'] === 'string' &&
+    v['id'].length > 0 &&
+    typeof v['name'] === 'string' &&
+    typeof v['sortOrder'] === 'number' &&
+    typeof v['hasBar'] === 'boolean' &&
+    typeof v['hasKitchen'] === 'boolean' &&
+    (v['description'] === undefined || typeof v['description'] === 'string') &&
+    (v['capacity'] === undefined || (Number.isInteger(v['capacity']) && (v['capacity'] as number) >= 0))
+  );
+}
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -571,7 +606,7 @@ function isEventV3(v: unknown): v is EventV3 {
   if (typeof v['id'] !== 'string' || v['id'].length === 0) return false;
   if (typeof v['title'] !== 'string') return false;
   if (!isOptionalString(v['description']) || !isOptionalString(v['performer'])) return false;
-  if (!isOptionalString(v['facetId']) || !isOptionalHttpUrl(v['ticketUrl']) || !isOptionalHttpUrl(v['rsvpUrl'])) {
+  if (!isOptionalString(v['facetId']) || !isOptionalString(v['areaId']) || !isOptionalHttpUrl(v['ticketUrl']) || !isOptionalHttpUrl(v['rsvpUrl'])) {
     return false;
   }
   if (!isRealDate(v['startDate'])) return false;
@@ -798,6 +833,16 @@ export function loadConfig(filePath: string = READY_CONFIG_FILE_PATH): ReadyConf
     facets = obj['facets'] as FacetV3[];
   }
 
+  let areas: AreaV3[] | undefined;
+  if (obj['areas'] !== undefined) {
+    if (!Array.isArray(obj['areas']) || !obj['areas'].every(isAreaV3)) {
+      throw new ConfigError(
+        'EZFORGE_READY_CONFIG.areas must be an array of areas (id, name, sortOrder, hasBar, hasKitchen, optional description and capacity)',
+      );
+    }
+    areas = obj['areas'] as AreaV3[];
+  }
+
   let events: EventV3[] | undefined;
   if (obj['events'] !== undefined) {
     if (!Array.isArray(obj['events']) || !obj['events'].every(isEventV3)) {
@@ -848,6 +893,7 @@ export function loadConfig(filePath: string = READY_CONFIG_FILE_PATH): ReadyConf
     featureFlags: obj['featureFlags'] as FeatureFlags,
     catalog: obj['catalog'] as CatalogBlock | undefined,
     ...(facets ? { facets } : {}),
+    ...(areas ? { areas } : {}),
     ...(events ? { events } : {}),
     ...(menus ? { menus } : {}),
     integrations: obj['integrations'] as IntegrationsBlock | undefined,

@@ -16,7 +16,7 @@
 
 import { ProtocolError, ProtocolErrorCode } from '@modelcontextprotocol/server';
 import type { Tool } from '@modelcontextprotocol/server';
-import type { EventPriceTierV3, EventV3, ReadyConfig } from '../config-loader.js';
+import type { AreaV3, EventPriceTierV3, EventV3, ReadyConfig } from '../config-loader.js';
 import { OWNER_TEXT_LABEL, OWNER_TEXT_TOOL_NOTE } from '../owner-text.js';
 import { InvalidTimeZoneError, resolveLocalNow } from '../temporal.js';
 
@@ -43,7 +43,8 @@ export const EVENTS_TOOLS: Tool[] = [
     name: 'list_events',
     description:
       'Lists upcoming events (live music, tastings, etc.), weekly recurrences expanded, sorted by date and start time. ' +
-      'Returns { timezone, from, to, events: [{ eventId, date, title, performer?, doorsTime?, startTime, endTime?, status, currentPrice?, ticketUrl?, rsvpUrl?, facetId? }] }. ' +
+      'Returns { timezone, from, to, events: [{ eventId, date, title, performer?, doorsTime?, startTime, endTime?, status, currentPrice?, ticketUrl?, rsvpUrl?, facetId?, areaId?, areaName? }] }. ' +
+      '`areaId`/`areaName` name the venue area the event is in (see list_areas), when it has one. ' +
       '`status` is "scheduled", "sold_out" or "cancelled"; an `endTime` earlier than `startTime` means the event ends after midnight. ' +
       '`currentPrice` is { label, priceCents, currency, until? }: the ticket tier on sale right now (e.g. advance vs door), ' +
       'and `until` is the local datetime that tier ends; it is omitted for sold-out and cancelled events and when no tier is on sale. ' +
@@ -54,6 +55,7 @@ export const EVENTS_TOOLS: Tool[] = [
         from: { type: 'string', description: 'First date, YYYY-MM-DD; defaults to today (business timezone).' },
         to: { type: 'string', description: 'Last date, YYYY-MM-DD inclusive; defaults to 30 days after `from`.' },
         facetId: { type: 'string', description: 'Only events of this offering group (see list_facets).' },
+        areaId: { type: 'string', description: 'Only events in this venue area (see list_areas).' },
         limit: {
           type: 'integer',
           minimum: 1,
@@ -68,7 +70,7 @@ export const EVENTS_TOOLS: Tool[] = [
     name: 'get_event',
     description:
       'Returns one event with all of its ticket price tiers plus one occurrence and the tier on sale for it. ' +
-      'Returns { timezone, event: { eventId, title, description?, performer?, facetId?, startDate, doorsTime?, startTime, endTime?, recurrence, recurrenceUntil?, excludedDates?, status, ticketUrl?, rsvpUrl?, priceTiers: [{ label, priceCents, currency, endsDaysBefore?, endsAtLocalTime? }] }, ' +
+      'Returns { timezone, event: { eventId, title, description?, performer?, facetId?, areaId?, areaName?, startDate, doorsTime?, startTime, endTime?, recurrence, recurrenceUntil?, excludedDates?, status, ticketUrl?, rsvpUrl?, priceTiers: [{ label, priceCents, currency, endsDaysBefore?, endsAtLocalTime? }] }, ' +
       'occurrence: { date, status, currentPrice? } | null }. ' +
       'The occurrence is the one on `date` when given, otherwise the next one from today; `occurrence` is null when none is left. ' +
       'An unknown `eventId`, or a `date` that is not an occurrence of the event, is an error. ' +
@@ -233,7 +235,17 @@ function ownerText(text: string | undefined): string | undefined {
   return text ? `${OWNER_TEXT_LABEL}${text}` : undefined;
 }
 
-function occurrenceView(event: EventV3, date: string, nowLocal: string) {
+/**
+ * `areaId` (and `areaName` when the area is listed) of an event tied to an area.
+ * An `areaId` naming no listed area is still reported, without a name, rather than dropped.
+ */
+function areaFields(event: EventV3, areas: readonly AreaV3[]): { areaId?: string; areaName?: string } {
+  if (!event.areaId) return {};
+  const area = areas.find((a) => a.id === event.areaId);
+  return { areaId: event.areaId, ...(area ? { areaName: area.name } : {}) };
+}
+
+function occurrenceView(event: EventV3, date: string, nowLocal: string, areas: readonly AreaV3[]) {
   const price = currentPrice(event, date, nowLocal);
   return {
     eventId: event.id,
@@ -248,6 +260,7 @@ function occurrenceView(event: EventV3, date: string, nowLocal: string) {
     ...(event.ticketUrl ? { ticketUrl: event.ticketUrl } : {}),
     ...(event.rsvpUrl ? { rsvpUrl: event.rsvpUrl } : {}),
     ...(event.facetId ? { facetId: event.facetId } : {}),
+    ...areaFields(event, areas),
   };
 }
 
@@ -273,11 +286,13 @@ export function handleEventsTool(
   events: readonly EventV3[],
   timezone: string,
   clock: () => Date,
+  areas: readonly AreaV3[] = [],
 ): EventsToolResult {
   // Validate arguments first so a malformed call fails the same way in any config.
   let from: string | undefined;
   let to: string | undefined;
   let facetId: string | undefined;
+  let areaId: string | undefined;
   let limit = DEFAULT_LIMIT;
   let eventId = '';
   let date: string | undefined;
@@ -285,6 +300,7 @@ export function handleEventsTool(
     from = parseDateArg(args, 'from');
     to = parseDateArg(args, 'to');
     facetId = parseStringArg(args, 'facetId');
+    areaId = parseStringArg(args, 'areaId');
     limit = parseLimitArg(args);
     if (from !== undefined && to !== undefined && to < from) {
       throw invalidParams('Invalid range: `to` must not be before `from`');
@@ -321,8 +337,9 @@ export function handleEventsTool(
     // Each event contributes at most `limit` occurrences: more could never reach the top `limit`.
     const occurrences = events
       .filter((event) => facetId === undefined || event.facetId === facetId)
+      .filter((event) => areaId === undefined || event.areaId === areaId)
       .flatMap((event) =>
-        occurrenceDates(event, windowStart, windowEnd, limit).map((d) => occurrenceView(event, d, nowLocal)),
+        occurrenceDates(event, windowStart, windowEnd, limit).map((d) => occurrenceView(event, d, nowLocal, areas)),
       )
       .sort(compareOccurrences)
       .slice(0, limit);
@@ -364,6 +381,7 @@ export function handleEventsTool(
       ...(description ? { description } : {}),
       ...(event.performer ? { performer: event.performer } : {}),
       ...(event.facetId ? { facetId: event.facetId } : {}),
+      ...areaFields(event, areas),
       startDate: event.startDate,
       ...(event.doorsTime ? { doorsTime: event.doorsTime } : {}),
       startTime: event.startTime,

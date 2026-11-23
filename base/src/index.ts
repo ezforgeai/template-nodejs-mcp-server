@@ -5,6 +5,7 @@
  * home services, etc.). Reads EZFORGE_READY_CONFIG at startup and exposes:
  *   - MCP tools:      get_business_info, get_hours, check_open_now, get_last_order, get_contact_info,
  *                     list_facets (only when the config has facets),
+ *                     list_areas (only when the config has areas),
  *                     list_events, get_event (only when featureFlags.events is true)
  *   - MCP resources:  business profile, business hours
  *   - HTTP endpoints: GET /, GET /robots.txt, GET /health, ALL /mcp
