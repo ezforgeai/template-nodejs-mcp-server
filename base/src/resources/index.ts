@@ -9,6 +9,7 @@
 import { ProtocolError, ProtocolErrorCode, ResourceNotFoundError } from '@modelcontextprotocol/server';
 import type { Server } from '@modelcontextprotocol/server';
 import type { ReadyConfig } from '../config-loader.js';
+import { labelOwnerText } from '../owner-text.js';
 
 export const BUSINESS_PROFILE_URI = 'ready://business/profile';
 export const BUSINESS_HOURS_URI = 'ready://business/hours';
@@ -49,7 +50,7 @@ export function registerResources(
           {
             uri: BUSINESS_PROFILE_URI,
             mimeType: 'application/json',
-            text: JSON.stringify(config.business),
+            text: JSON.stringify(labelOwnerText(config.business)),
           },
         ],
       };

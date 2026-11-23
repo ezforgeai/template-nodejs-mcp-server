@@ -16,6 +16,7 @@ import type { Server } from '@modelcontextprotocol/server';
 import { normalizeHoursToV3 } from '../config-loader.js';
 import type { HoursBlockV3, HoursInterval, ReadyConfig } from '../config-loader.js';
 import type { AnalyticsReporter } from '../analytics.js';
+import { OWNER_TEXT_TOOL_NOTE, labelOwnerText } from '../owner-text.js';
 import { HOURS_TOOLS, handleHoursTool, isHoursToolName } from './hours.js';
 
 const TOOL_REQUIRED_SCOPE: Record<string, string> = {
@@ -31,6 +32,8 @@ type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: bo
 function jsonResult(value: unknown): ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(value) }] };
 }
+
+export { OWNER_TEXT_LABEL } from '../owner-text.js';
 
 /** "17:30" → "5:30 PM". Presentation only — no date math. */
 function formatClock(hhmm: string): string {
@@ -112,7 +115,8 @@ export function registerTools(
     tools: [
       {
         name: 'get_business_info',
-        description: 'Returns general information about the business (name, description, category).',
+        description:
+          `Returns general information about the business (name, description, category). ${OWNER_TEXT_TOOL_NOTE}`,
         inputSchema: {
           type: 'object',
           properties: {},
@@ -159,9 +163,7 @@ export function registerTools(
     let result: ToolResult;
 
     if (name === 'get_business_info') {
-      result = {
-        content: [{ type: 'text', text: JSON.stringify(config.business) }],
-      };
+      result = jsonResult(labelOwnerText(config.business));
     } else if (name === 'get_hours') {
       // v3.0-shaped regardless of source version (issue #8534): a v2.0 open
       // day is one `service` interval, `'closed'` is `[]`, and timezone is ''.
