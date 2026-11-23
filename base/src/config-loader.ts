@@ -99,6 +99,16 @@ export interface CatalogCategory {
   id: string;
   name: string;
   sortOrder: number;
+  /** Offering group this category belongs to (v3.0 facets, Ready Phase 4.1); absent ⇒ ungrouped. */
+  facetId?: string;
+}
+
+/** An offering group above categories, e.g. Kitchen / Taproom (v3.0, Ready Phase 4.1). */
+export interface FacetV3 {
+  id: string;
+  name: string;
+  description?: string;
+  sortOrder: number;
 }
 
 /** A single catalog item — menu item, service, or product. */
@@ -160,6 +170,8 @@ export interface ReadyConfig {
   featureFlags: FeatureFlags;
   /** Catalog of items (optional — may be empty at initial deploy time). */
   catalog?: CatalogBlock;
+  /** Active offering groups in `sortOrder` (v3.0); absent when the business has none. */
+  facets?: FacetV3[];
   /**
    * Schedule-gated menus (v3.0, spec §5.5/§7). Absent on v2.0 blobs and menu-less v3.0 blobs.
    * Section items carry `itemId` plus override-only fields; resolve them against
@@ -461,6 +473,17 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+function isFacetV3(v: unknown): v is FacetV3 {
+  return (
+    isRecord(v) &&
+    typeof v['id'] === 'string' &&
+    v['id'].length > 0 &&
+    typeof v['name'] === 'string' &&
+    typeof v['sortOrder'] === 'number' &&
+    (v['description'] === undefined || typeof v['description'] === 'string')
+  );
+}
+
 function isMenuSchedule(v: unknown): boolean {
   if (!isRecord(v)) return false;
   if (typeof v['start'] !== 'string' || typeof v['end'] !== 'string') return false;
@@ -653,6 +676,16 @@ export function loadConfig(filePath: string = READY_CONFIG_FILE_PATH): ReadyConf
     );
   }
 
+  let facets: FacetV3[] | undefined;
+  if (obj['facets'] !== undefined) {
+    if (!Array.isArray(obj['facets']) || !obj['facets'].every(isFacetV3)) {
+      throw new ConfigError(
+        'EZFORGE_READY_CONFIG.facets must be an array of facets (id, name, sortOrder, optional description)',
+      );
+    }
+    facets = obj['facets'] as FacetV3[];
+  }
+
   let menus: MenuSourceV3[] | undefined;
   if (obj['menus'] !== undefined) {
     if (!Array.isArray(obj['menus']) || !obj['menus'].every(isMenuV3)) {
@@ -692,6 +725,7 @@ export function loadConfig(filePath: string = READY_CONFIG_FILE_PATH): ReadyConf
     contact: obj['contact'] as ContactBlock,
     featureFlags: obj['featureFlags'] as FeatureFlags,
     catalog: obj['catalog'] as CatalogBlock | undefined,
+    ...(facets ? { facets } : {}),
     ...(menus ? { menus } : {}),
     integrations: obj['integrations'] as IntegrationsBlock | undefined,
     analytics: obj['analytics'] as AnalyticsBlock | undefined,

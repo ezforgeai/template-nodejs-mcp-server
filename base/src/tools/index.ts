@@ -7,6 +7,7 @@
  *   - check_open_now     — open/closed now (optionally per role) with next open/close
  *   - get_last_order     — today's last-order times per role and window state
  *   - get_contact_info   — phone, email, website, address
+ *   - list_facets        — offering groups with their categories (only when the config has facets)
  *
  * All time logic lives in `../temporal.ts`; handlers only shape its results.
  */
@@ -18,8 +19,10 @@ import type { HoursBlockV3, HoursInterval, ReadyConfig } from '../config-loader.
 import type { AnalyticsReporter } from '../analytics.js';
 import { OWNER_TEXT_TOOL_NOTE, labelOwnerText } from '../owner-text.js';
 import { HOURS_TOOLS, handleHoursTool, isHoursToolName } from './hours.js';
+import { facetToolsFor, handleFacetTool, isFacetToolName } from './facets.js';
 
 const TOOL_REQUIRED_SCOPE: Record<string, string> = {
+  list_facets: 'mcp:read',
   get_business_info: 'mcp:read',
   get_hours: 'mcp:read',
   check_open_now: 'mcp:read',
@@ -140,6 +143,7 @@ export function registerTools(
         },
       },
       ...HOURS_TOOLS,
+      ...facetToolsFor(config),
       {
         name: 'get_contact_info',
         description: 'Returns contact information for the business (phone, email, website, address).',
@@ -170,6 +174,8 @@ export function registerTools(
       result = jsonResult({ ...hours, summary: summarizeHours(hours) });
     } else if (isHoursToolName(name)) {
       result = handleHoursTool(name, args, hours, clock) as ToolResult;
+    } else if (isFacetToolName(name) && facetToolsFor(config).some((tool) => tool.name === name)) {
+      result = handleFacetTool(name, args, config) as ToolResult;
     } else if (name === 'get_contact_info') {
       result = {
         content: [{ type: 'text', text: JSON.stringify(config.contact) }],
